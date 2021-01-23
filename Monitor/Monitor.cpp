@@ -6,17 +6,23 @@
 #include <iostream>
 #include <sstream>
 
+std::vector<cv::UMat> uslojevi1(3);
+std::vector<cv::UMat> uslojevi2(3);
+std::vector<cv::Mat> slojevi(3);
+cv::UMat umat1, umat2;
+int h, w, sh, sw;
+
 class TCPclient {
 	struct addrinfo *result = NULL, *ptr = NULL, hints;
 	SOCKET ConnectSocket = INVALID_SOCKET;
-	int recvbuflen = 2048;
+	int recvbuflen = 400000;
 	std::string address;
 	WSADATA wsaData;
 	int iResult;
 	int port;
 
 public:
-	char data[2048];
+	char data[400000];
 	int length = 0;
 	void connect() {
 		if (getaddrinfo(address.c_str(), std::to_string(port).c_str(), &hints, &result)) {
@@ -44,6 +50,16 @@ public:
 			WSACleanup();
 			throw "Unable to connect to server!";
 		}
+
+		int dims[2];
+		memcpy(dims, recv(), sizeof(dims));
+		h = dims[0];
+		w = dims[1];
+		sh = h * 0.75;
+		sw = w * 0.75;
+		slojevi[0] = cv::Mat::zeros(cv::Size(sw, sh), CV_8UC1);
+		slojevi[1] = cv::Mat::zeros(cv::Size(sw / 2, sh / 2), CV_8UC1);
+		slojevi[2] = cv::Mat::zeros(cv::Size(sw / 2, sh / 2), CV_8UC1);
 	}
 
 	TCPclient(std::string address, int port) {
@@ -69,6 +85,21 @@ public:
 		return data;
 	}
 
+	bool send(const char *data, int length) {
+		if (::send(ConnectSocket, data, length, 0) == SOCKET_ERROR) {
+			if (shutdown(ConnectSocket, SD_SEND) == SOCKET_ERROR) {
+				closesocket(ConnectSocket);
+				WSACleanup();
+				throw "shutdown failed with error: " + std::to_string(WSAGetLastError());
+			}
+			closesocket(ConnectSocket);
+			connect();
+			return true;
+			//throw "send failed with error: " + std::to_string(WSAGetLastError());
+		}
+		return false;
+	}
+	
 	~TCPclient() {
 		if (shutdown(ConnectSocket, SD_SEND) == SOCKET_ERROR) {
 			closesocket(ConnectSocket);
@@ -80,43 +111,63 @@ public:
 	};
 };
 
-int main() {
+int getPaket(char *data) {
 	int dims[4];
-	cv::Mat img;
-	cv::namedWindow("img", cv::WINDOW_KEEPRATIO);
+	memcpy(dims, data, sizeof(dims));
+	int xx = dims[0];
+	int yy = dims[1];
+	int ssize = dims[2];
+	int flag = dims[3];
+	if (flag != 'K' && flag != 'P')
+		return flag;
+	int size[3], x[3], y[3], sizex[3], sizey[3], size1[3];
+	for (int i = 0; i < 3; i++) {
+		size[i] = i ? ssize / 2 : ssize;
+		x[i] = i ? xx / 2 : xx;
+		y[i] = i ? yy / 2 : yy;
+		sizex[i] = min(size[i], slojevi[i].cols - x[i]);
+		sizey[i] = min(size[i], slojevi[i].rows - y[i]);
+		size1[i] = y[i] + sizey[i];
+	}
+
+	int last = sizeof(dims);
+	for (int i = 0; i < 3; i++)
+		for (int j = y[i]; j < size1[i]; j++) {
+			memcpy(slojevi[i].data + (j * slojevi[i].cols + x[i]), data + last, sizex[i]);
+			last += sizex[i];
+		}
+
+	return flag;
+}
+
+int main() {
 	TCPclient klijent("localhost", 69);
+	//cv::namedWindow("img", cv::WINDOW_KEEPRATIO);
 
 	std::chrono::high_resolution_clock::time_point pt = std::chrono::high_resolution_clock::now();
 	for (size_t i = 0; 1; i++) {
-		if (i % 10 == 0) {
-			SetConsoleTitleA(std::to_string(10 / (std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::high_resolution_clock::now() - pt)).count()).c_str());
+		klijent.recv();
+		klijent.send(" OK\n", 4);
+		//std::cout << klijent.length << std::endl;
+		char flag = getPaket(klijent.data);
+		if (flag != 'P')
+			continue;
+
+		slojevi[0].copyTo(uslojevi2[0]);
+		slojevi[1].copyTo(uslojevi1[1]);
+		slojevi[2].copyTo(uslojevi1[2]);
+
+		resize(uslojevi1[1], uslojevi2[1], cv::Size(), 2, 2);
+		resize(uslojevi1[2], uslojevi2[2], cv::Size(), 2, 2);
+		merge(uslojevi2, umat1);
+		cvtColor(umat1, umat2, cv::COLOR_YCrCb2BGR, 3);
+
+		imshow("img", umat2);
+		cv::waitKey(1);
+		if (i % 5 == 0) {
+			SetConsoleTitleA(std::to_string(5 / (std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::high_resolution_clock::now() - pt)).count()).c_str());
 			pt = std::chrono::high_resolution_clock::now();
 		}
-		try {
-			klijent.recv();
-		}
-		catch (...) {
-			klijent.connect();
-		}
-		if (klijent.length != 16)
-			continue;
-		memcpy(dims, klijent.data, klijent.length);
-		if (dims[3] != 6942069)
-			continue;
-		int size = dims[0] * dims[1] * dims[2];
-		img.create(dims[0], dims[1], CV_8UC(dims[2]));
-		for (int i = 0; i < size; i += klijent.length) {
-			try {
-				klijent.recv();
-			}
-			catch (std::exception) {
-				klijent.connect();
-			}
-			memcpy(img.data + min(i, size - klijent.length), klijent.data, klijent.length);
-		}
-
-		imshow("img", img);
-		cv::waitKey(2);
 	}
 
 	return 0;
