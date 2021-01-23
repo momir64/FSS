@@ -8,7 +8,8 @@
 #include <vector>
 #include <ctime>
 
-#define CUBE 16
+#define PASIZE 1024
+#define CK 10.0
 
 class Monitori {
 	class Monitor {
@@ -133,7 +134,7 @@ public:
 			throw "accept failed with error: " + std::to_string(WSAGetLastError());
 		}
 		closesocket(ListenSocket);
-		int dims[] = { h, w };
+		int dims[] = { h, w , PASIZE };
 		send((char *)dims, sizeof(dims));
 	}
 
@@ -172,7 +173,7 @@ public:
 			throw "recv failed with error: " + std::to_string(WSAGetLastError());
 		return data;
 	}
-	
+
 	~TCPserver() {
 		iResult = shutdown(ClientSocket, SD_SEND);
 		if (iResult == SOCKET_ERROR) {
@@ -189,49 +190,14 @@ std::vector<cv::Mat> slojevi(3);
 std::vector<cv::Mat> oldslojevi(3);
 std::vector<cv::UMat> uslojevi1(3);
 std::vector<cv::UMat> uslojevi2(3);
-int getPaket(int xx, int yy, int flag = 0, int ssize = CUBE) {
-	bool same = true;
-	int size[3], x[3], y[3], sizex[3], sizey[3], size1[3];
-	for (int i = 0; i < 3; i++) {
-		size[i] = i ? ssize / 2 : ssize;
-		x[i] = i ? xx / 2 : xx;
-		y[i] = i ? yy / 2 : yy;
-		sizex[i] = min(size[i], slojevi[i].cols - x[i]);
-		sizey[i] = min(size[i], slojevi[i].rows - y[i]);
-		size1[i] = y[i] + sizey[i];
-	}
-	for (int i = 0; i < 3; i++) {
-		for (int j = y[i]; j < size1[i]; j++) {
-			int size2 = j * slojevi[i].cols + x[i] + sizex[i];
-			for (int z = size2 - sizex[i]; z < size2; z++)
-				if (slojevi[i].data[z] != oldslojevi[i].data[z]) {
-					same = false;
-					break;
-				}
-			if (!same)
-				break;
-		}
-	}
-	int dims[] = { xx, yy, ssize , flag };
-	memcpy(paket, dims, sizeof(dims));
-	int last = sizeof(dims);
-	if (same && flag != 'P')
-		return 0;
-	for (int i = 0; i < 3; i++)
-		for (int j = y[i]; j < size1[i]; j++) {
-			memcpy(paket + last, slojevi[i].data + (j * slojevi[i].cols + x[i]), sizex[i]);
-			last += sizex[i];
-		}
-	return last;
-}
 
 void obradi_ss() {
 	screenshot.copyTo(umat2);
 	resize(umat2, umat1, cv::Size(), 0.75, 0.75);
 	cvtColor(umat1, umat2, cv::COLOR_BGR2YCrCb, 3);
 	cv::split(umat2, uslojevi1);
-	resize(uslojevi1[1], uslojevi2[1], cv::Size(), 0.5, 0.5);
-	resize(uslojevi1[2], uslojevi2[2], cv::Size(), 0.5, 0.5);
+	resize(uslojevi1[1], uslojevi2[1], cv::Size(), 1 / CK, 1 / CK);
+	resize(uslojevi1[2], uslojevi2[2], cv::Size(), 1 / CK, 1 / CK);
 	uslojevi1[0].copyTo(slojevi[0]);
 	uslojevi2[1].copyTo(slojevi[1]);
 	uslojevi2[2].copyTo(slojevi[2]);
@@ -259,24 +225,20 @@ int main() {
 		take_screenshot();
 		obradi_ss();
 
+		if (server.send("START\0", 6)) continue;
+		server.recv();
 		bool skip = false;
-		for (int i = 0; i < sh; i += CUBE) {
-			for (int j = 0; j < sw; j += CUBE) {
-				char flag = i + CUBE >= sh && j + CUBE >= sw ? 'P' : 'K';
-				int size = getPaket(j, i, flag);
-				if (!size) continue;
-				//if(flag == 'P')
-				//	std::cout << "P";
-				if (server.send(paket, size)) {
+		int size[3] = { sw * sh, sw * sh / CK / CK, sw * sh / CK / CK };
+		for (int i = 0; i < 3; i++) {
+			for (int z = 0; z < size[i]; z += PASIZE) {
+				if (server.send((char *)slojevi[i].data + z, min(size[i] - z, PASIZE))) {
 					skip = true;
 					break;
 				}
 				server.recv();
-				//std::cout << flag << server.recv();
 			}
 			if (skip) break;
 		}
-
 
 
 		////resize(slojevi[1], c1, cv::Size(), 2, 2);

@@ -6,11 +6,13 @@
 #include <iostream>
 #include <sstream>
 
+#define CK 10.0
+
 std::vector<cv::UMat> uslojevi1(3);
 std::vector<cv::UMat> uslojevi2(3);
 std::vector<cv::Mat> slojevi(3);
 cv::UMat umat1, umat2;
-int h, w, sh, sw;
+int h, w, sh, sw, PASIZE;
 
 class TCPclient {
 	struct addrinfo *result = NULL, *ptr = NULL, hints;
@@ -51,15 +53,16 @@ public:
 			throw "Unable to connect to server!";
 		}
 
-		int dims[2];
+		int dims[3];
 		memcpy(dims, recv(), sizeof(dims));
 		h = dims[0];
 		w = dims[1];
 		sh = h * 0.75;
 		sw = w * 0.75;
+		PASIZE = dims[2];
 		slojevi[0] = cv::Mat::zeros(cv::Size(sw, sh), CV_8UC1);
-		slojevi[1] = cv::Mat::zeros(cv::Size(sw / 2, sh / 2), CV_8UC1);
-		slojevi[2] = cv::Mat::zeros(cv::Size(sw / 2, sh / 2), CV_8UC1);
+		slojevi[1] = cv::Mat::zeros(cv::Size(sw / CK, sh / CK), CV_8UC1);
+		slojevi[2] = cv::Mat::zeros(cv::Size(sw / CK, sh / CK), CV_8UC1);
 	}
 
 	TCPclient(std::string address, int port) {
@@ -99,7 +102,7 @@ public:
 		}
 		return false;
 	}
-	
+
 	~TCPclient() {
 		if (shutdown(ConnectSocket, SD_SEND) == SOCKET_ERROR) {
 			closesocket(ConnectSocket);
@@ -147,18 +150,25 @@ int main() {
 	std::chrono::high_resolution_clock::time_point pt = std::chrono::high_resolution_clock::now();
 	for (size_t i = 0; 1; i++) {
 		klijent.recv();
-		klijent.send(" OK\n", 4);
-		//std::cout << klijent.length << std::endl;
-		char flag = getPaket(klijent.data);
-		if (flag != 'P')
+		if (klijent.data != std::string("START"))
 			continue;
+		klijent.send("OK", 2);
+
+		int size[3] = { sw * sh, sw * sh / CK / CK, sw * sh / CK / CK };
+		for (int i = 0; i < 3; i++) {
+			for (int z = 0; z < size[i]; z += PASIZE) {
+				klijent.recv();
+				klijent.send("OK", 2);
+				memcpy((char *)slojevi[i].data + z, klijent.data, min(size[i] - z, PASIZE));
+			}
+		}
 
 		slojevi[0].copyTo(uslojevi2[0]);
 		slojevi[1].copyTo(uslojevi1[1]);
 		slojevi[2].copyTo(uslojevi1[2]);
 
-		resize(uslojevi1[1], uslojevi2[1], cv::Size(), 2, 2);
-		resize(uslojevi1[2], uslojevi2[2], cv::Size(), 2, 2);
+		resize(uslojevi1[1], uslojevi2[1], cv::Size(), CK, CK);
+		resize(uslojevi1[2], uslojevi2[2], cv::Size(), CK, CK);
 		merge(uslojevi2, umat1);
 		cvtColor(umat1, umat2, cv::COLOR_YCrCb2BGR, 3);
 
