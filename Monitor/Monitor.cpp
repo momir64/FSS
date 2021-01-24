@@ -6,17 +6,21 @@
 #include <iostream>
 #include <sstream>
 
+#define PASIZE 1400
+
+int h, w, c;
+
 class TCPclient {
 	struct addrinfo *result = NULL, *ptr = NULL, hints;
 	SOCKET ConnectSocket = INVALID_SOCKET;
-	int recvbuflen = 2048;
+	int recvbuflen = PASIZE;
 	std::string address;
 	WSADATA wsaData;
 	int iResult;
 	int port;
 
 public:
-	char data[2048];
+	char data[PASIZE];
 	int length = 0;
 	void connect() {
 		if (getaddrinfo(address.c_str(), std::to_string(port).c_str(), &hints, &result)) {
@@ -44,6 +48,13 @@ public:
 			WSACleanup();
 			throw "Unable to connect to server!";
 		}
+
+		recv();
+		int dims[3];
+		memcpy(dims, data, 12);
+		h = dims[0];
+		w = dims[1];
+		c = dims[2];
 	}
 
 	TCPclient(std::string address, int port) {
@@ -81,10 +92,10 @@ public:
 };
 
 int main() {
-	int dims[4];
-	cv::Mat img;
 	cv::namedWindow("img", cv::WINDOW_KEEPRATIO);
 	TCPclient klijent("localhost", 69);
+	cv::Mat img(h, w, CV_8UC(c));
+	int size = h * w * c;
 
 	std::chrono::high_resolution_clock::time_point pt = std::chrono::high_resolution_clock::now();
 	for (size_t i = 0; 1; i++) {
@@ -92,31 +103,17 @@ int main() {
 			SetConsoleTitleA(std::to_string(10 / (std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::high_resolution_clock::now() - pt)).count()).c_str());
 			pt = std::chrono::high_resolution_clock::now();
 		}
-		try {
-			klijent.recv();
-		}
-		catch (...) {
-			klijent.connect();
-		}
-		if (klijent.length != 16)
+		
+		klijent.recv();
+		if (std::string(klijent.data, klijent.length) != "START")
 			continue;
-		memcpy(dims, klijent.data, klijent.length);
-		if (dims[3] != 6942069)
-			continue;
-		int size = dims[0] * dims[1] * dims[2];
-		img.create(dims[0], dims[1], CV_8UC(dims[2]));
 		for (int i = 0; i < size; i += klijent.length) {
-			try {
-				klijent.recv();
-			}
-			catch (std::exception) {
-				klijent.connect();
-			}
+			klijent.recv();
 			memcpy(img.data + min(i, size - klijent.length), klijent.data, klijent.length);
 		}
 
 		imshow("img", img);
-		cv::waitKey(2);
+		cv::waitKey(1);
 	}
 
 	return 0;

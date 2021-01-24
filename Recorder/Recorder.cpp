@@ -8,6 +8,8 @@
 #include <vector>
 #include <ctime>
 
+#define PASIZE 1400
+
 class Monitori {
 	class Monitor {
 	public:
@@ -49,31 +51,33 @@ CURSORINFO cursor;
 Monitori monitori;
 HBITMAP hbwindow;
 cv::Mat screenshot;
-int w, h, x, y;
+int w, h, x, y, sw, sh;
+int mid;
 
-void take_screenshot(int id) {
-	if (monitorid != id) {
-		monitorid = id;
-		w = monitori[id].w;
-		h = monitori[id].h;
-		x = monitori[id].x;
-		y = monitori[id].y;
-		hbwindow = CreateCompatibleBitmap(hwindowDC, w, h);
-		screenshot.create(h, w, CV_8UC3);
-		bi.biSize = sizeof(BITMAPINFOHEADER);
-		bi.biWidth = w;
-		bi.biHeight = -h;
-		bi.biPlanes = 1;
-		bi.biBitCount = 24;
-		bi.biCompression = 0L;
-		bi.biSizeImage = 0;
-		bi.biXPelsPerMeter = 0;
-		bi.biYPelsPerMeter = 0;
-		bi.biClrUsed = 0;
-		bi.biClrImportant = 0;
-		SelectObject(hwindowCompatibleDC, hbwindow);
-	}
-	BitBlt(hwindowCompatibleDC, 0, 0, w, h, hwindowDC, x, y, SRCCOPY);
+void setup_ss() {
+	w = monitori[mid].w;
+	h = monitori[mid].h;
+	x = monitori[mid].x;
+	y = monitori[mid].y;
+	sw = 0.75 * w;
+	sh = 0.75 * h;
+	hbwindow = CreateCompatibleBitmap(hwindowDC, w, h);
+	SelectObject(hwindowCompatibleDC, hbwindow);
+	bi.biSize = sizeof(BITMAPINFOHEADER);
+	screenshot.create(h, w, CV_8UC3);
+	bi.biYPelsPerMeter = 0;
+	bi.biXPelsPerMeter = 0;
+	bi.biClrImportant = 0;
+	bi.biCompression = 0L;
+	bi.biSizeImage = 0;
+	bi.biBitCount = 24;
+	bi.biClrUsed = 0;
+	bi.biHeight = -h;
+	bi.biPlanes = 1;
+	bi.biWidth = w;
+}
+
+void add_cursor() {
 	cursor = { sizeof(cursor) };
 	GetCursorInfo(&cursor);
 	if (cursor.flags == CURSOR_SHOWING) {
@@ -81,20 +85,13 @@ void take_screenshot(int id) {
 		GetObjectA(info.hbmColor, sizeof(bmpCursor), &bmpCursor);
 		DrawIconEx(hwindowCompatibleDC, cursor.ptScreenPos.x - monitori[0].x - x - info.xHotspot, cursor.ptScreenPos.y - monitori[0].y - y - info.yHotspot, cursor.hCursor, bmpCursor.bmWidth, bmpCursor.bmHeight, 0, NULL, DI_NORMAL);
 	}
-	GetDIBits(hwindowCompatibleDC, hbwindow, 0, h, screenshot.data, (BITMAPINFO *)&bi, 0);
 }
 
-char colormat[300] = {
-36,28,237,36,28,237,76,177,34,76,177,34,232,162,0,232,162,0,21,0,136,21,0,136,21,0,136,21,0,136,
-39,127,255,76,177,34,76,177,34,232,162,0,232,162,0,14,201,255,21,0,136,29,230,181,29,230,181,29,230,181,
-39,127,255,76,177,34,36,28,237,232,162,0,21,0,136,14,201,255,14,201,255,14,201,255,234,217,153,21,0,136,
-39,127,255,76,177,34,21,0,136,21,0,136,21,0,136,176,228,239,201,174,255,14,201,255,14,201,255,76,177,34,
-39,127,255,76,177,34,21,0,136,201,174,255,201,174,255,201,174,255,201,174,255,232,162,0,14,201,255,76,177,34,
-39,127,255,21,0,136,201,174,255,232,162,0,36,28,237,36,28,237,36,28,237,232,162,0,14,201,255,14,201,255,
-39,127,255,21,0,136,232,162,0,29,230,181,36,28,237,36,28,237,36,28,237,232,162,0,234,217,153,14,201,255,
-39,127,255,21,0,136,232,162,0,36,28,237,36,28,237,176,228,239,76,177,34,232,162,0,234,217,153,14,201,255,
-39,127,255,36,28,237,36,28,237,36,28,237,176,228,239,76,177,34,76,177,34,36,28,237,76,177,34,14,201,255,
-39,127,255,36,28,237,176,228,239,190,146,112,190,146,112,190,146,112,190,146,112,190,146,112,190,146,112,14,201,255 };
+void take_screenshot() {
+	BitBlt(hwindowCompatibleDC, 0, 0, w, h, hwindowDC, x, y, SRCCOPY);
+	add_cursor();
+	GetDIBits(hwindowCompatibleDC, hbwindow, 0, h, screenshot.data, (BITMAPINFO *)&bi, 0);
+}
 
 class TCPserver {
 	SOCKET ListenSocket = INVALID_SOCKET;
@@ -140,12 +137,8 @@ public:
 			throw "accept failed with error: " + std::to_string(WSAGetLastError());
 		}
 		closesocket(ListenSocket);
-		//if (ioctlsocket(ClientSocket, FIONBIO, &mode) == INVALID_SOCKET) {
-		//	WSACleanup();
-		//	throw "ioctlsocket failed with error: " + std::to_string(WSAGetLastError());
-		//}
-		//FD_ZERO(&fds);
-		//FD_SET(ClientSocket, &fds);
+		int dims[] = { sh, sw , 3 };
+		send((char *)dims, sizeof(dims));
 	}
 
 	TCPserver(int port) {
@@ -160,18 +153,7 @@ public:
 		connect();
 	}
 
-	void send(const uchar *data, int length) {
-		/*iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
-		if (iResult <= 0 && WSAGetLastError() != WSAEWOULDBLOCK) {
-			if (shutdown(ClientSocket, SD_SEND) == SOCKET_ERROR) {
-				closesocket(ClientSocket);
-				WSACleanup();
-				throw "shutdown failed with error: " + std::to_string(WSAGetLastError());
-			}
-			closesocket(ClientSocket);
-			connect();
-		}*/
-		//select(0, 0, &fds, 0, 0);
+	void send(const char *data, int length) {
 		if (::send(ClientSocket, (const char *)data, length, 0) == SOCKET_ERROR) {
 			if (shutdown(ClientSocket, SD_SEND) == SOCKET_ERROR) {
 				closesocket(ClientSocket);
@@ -196,12 +178,12 @@ public:
 
 
 int main() {
-	cv::Mat img(10, 10, CV_8UC3, colormat);
+	mid = 2;
+	setup_ss();
+	TCPserver server(69);
 
 	cv::Mat pom;
-	TCPserver server(69);
-	cv::UMat upom, c1, c2;
-	std::vector<cv::UMat> slojevi(3);
+	cv::UMat upom1, upom2;
 	std::chrono::high_resolution_clock::time_point pt = std::chrono::high_resolution_clock::now();
 	for (size_t i = 0; 1; i++) {
 		if (i % 10 == 0) {
@@ -209,33 +191,17 @@ int main() {
 			pt = std::chrono::high_resolution_clock::now();
 		}
 
-		take_screenshot(2);
+		take_screenshot();
 
-		//cvtColor(screenshot, upom, cv::COLOR_BGR2YCrCb, 3);
-		//split(upom, slojevi);
-		//resize(slojevi[1], c1, cv::Size(), 0.5, 0.5);
-		//resize(slojevi[2], c2, cv::Size(), 0.5, 0.5);
+		resize(screenshot.getUMat(cv::ACCESS_FAST), upom1, cv::Size(), 0.75, 0.75);
+		//cvtColor(upom1, upom2, cv::COLOR_BGR2GRAY);
+		upom1.copyTo(pom);
 
-		//resize(c1, slojevi[1], cv::Size(), 2, 2);
-		//resize(c2, slojevi[2], cv::Size(), 2, 2);
-		//merge(slojevi, upom);
-		//cvtColor(upom, pom, cv::COLOR_YCrCb2BGR, 3);
+		//int dims[] = { pom.rows , pom.cols , pom.channels() };
+		int size = sw * sh * 3;
+		server.send("START", 5);
+		for (int i = 0; i < size; i += PASIZE)
+			server.send((char *)pom.data + i, min(size - i, PASIZE));
 
-		resize(screenshot, pom, cv::Size(), 0.75, 0.75);
-		//cvtColor(screenshot, pom, cv::COLOR_BGR2GRAY);
-
-		
-		int dims[] = { pom.rows , pom.cols , pom.channels() , 6942069};
-		int size = dims[0] * dims[1] * dims[2];
-		uchar dimsc[16];
-		memcpy(dimsc, dims, 16);
-		server.send(dimsc, 16);
-		for (int i = 0; i < size; i += 1024) {
-			server.send(pom.data + i, min(size - i, 1024));
-		}
-
-		//std::cout << pom.rows * pom.cols * 3 << std::endl;
-		//imshow("img", pom);
-		//cv::waitKey(2);
 	}
 }
