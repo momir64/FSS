@@ -8,8 +8,6 @@
 #include <vector>
 #include <ctime>
 
-#define PASIZE 1400
-
 class Monitori {
 	class Monitor {
 	public:
@@ -51,7 +49,8 @@ CURSORINFO cursor;
 Monitori monitori;
 HBITMAP hbwindow;
 cv::Mat screenshot;
-int w, h, x, y, sw, sh;
+int w, h, x, y, sw, sh, PASIZE;
+float cx, cy, c;
 int mid;
 
 void setup_ss() {
@@ -59,8 +58,6 @@ void setup_ss() {
 	h = monitori[mid].h;
 	x = monitori[mid].x;
 	y = monitori[mid].y;
-	sw = 0.75 * w;
-	sh = 0.75 * h;
 	hbwindow = CreateCompatibleBitmap(hwindowDC, w, h);
 	SelectObject(hwindowCompatibleDC, hbwindow);
 	bi.biSize = sizeof(BITMAPINFOHEADER);
@@ -100,13 +97,15 @@ class TCPserver {
 	struct addrinfo hints;
 	int recvbuflen = 32;
 	struct fd_set fds;
-	char recvbuf[32];
 	WSADATA wsaData;
 	u_long mode = 1;
 	int iResult;
 	int port;
 
 public:
+	char data[32];
+	int length;
+
 	void connect() {
 		if (getaddrinfo(NULL, std::to_string(port).c_str(), &hints, &result)) {
 			WSACleanup();
@@ -137,8 +136,24 @@ public:
 			throw "accept failed with error: " + std::to_string(WSAGetLastError());
 		}
 		closesocket(ListenSocket);
-		int dims[] = { sh, sw , 3 };
-		send((char *)dims, sizeof(dims));
+		
+		recv();
+		int dimsi[2];
+		float dimsf[2];
+		memcpy(dimsi, data, sizeof(dimsi));
+		memcpy(dimsf, data + sizeof(dimsi), sizeof(dimsf));
+		PASIZE = dimsi[0];
+		c = dimsi[1];
+		cx = dimsf[0];
+		cy = dimsf[1];
+
+		sw = cx * w;
+		sh = cy * h;
+		
+		dimsi[0] = sh;
+		dimsi[1] = sw;
+		send((char *)dimsi, sizeof(dimsi));
+		
 	}
 
 	TCPserver(int port) {
@@ -164,6 +179,15 @@ public:
 			connect();
 			//throw "send failed with error: " + std::to_string(WSAGetLastError());
 		}
+	}
+
+	char *recv() {
+		length = ::recv(ClientSocket, data, recvbuflen, 0);
+		if (length == 0)
+			throw "Connection closed!";
+		else if (length < 0)
+			throw "recv failed with error: " + std::to_string(WSAGetLastError());
+		return data;
 	}
 
 	~TCPserver() {
@@ -193,7 +217,7 @@ int main() {
 
 		take_screenshot();
 
-		resize(screenshot.getUMat(cv::ACCESS_FAST), upom1, cv::Size(), 0.75, 0.75);
+		resize(screenshot.getUMat(cv::ACCESS_FAST), upom1, cv::Size(), cx, cy);
 		//cvtColor(upom1, upom2, cv::COLOR_BGR2GRAY);
 		upom1.copyTo(pom);
 
